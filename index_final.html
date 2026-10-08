@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<title>Taxi Nav Zagreb v1.3</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#111;color:#fff;font-family:Arial,Helvetica,sans-serif}
+body{overflow:hidden}
+#app{height:100%;position:relative}
+#map{position:absolute;inset:0;z-index:1}
+.leaflet-control-attribution{font-size:10px}
+.leaflet-control-zoom{margin-top:70px!important}
+.top{position:absolute;left:12px;right:12px;top:12px;z-index:900}
+.search{display:flex;align-items:center;background:#fff;color:#111;border-radius:15px;height:54px;padding:0 10px;box-shadow:0 5px 20px #0006}
+.search .icon{font-size:20px;margin:0 7px}
+.search input{border:0;outline:0;flex:1;font-size:16px;background:transparent;min-width:0}
+.search button{border:0;background:transparent;font-size:25px;color:#777}
+#results{margin-top:7px;background:#fff;color:#111;border-radius:14px;overflow:hidden;display:none;box-shadow:0 5px 20px #0007;max-height:270px}
+.result{padding:12px 14px;border-bottom:1px solid #ddd;cursor:pointer}
+.result:last-child{border:0}.result b{display:block;font-size:15px}.result span{font-size:12px;color:#666}
+.chips{display:flex;gap:7px;margin-top:8px;overflow:auto;scrollbar-width:none}
+.chip{border:0;border-radius:20px;padding:9px 12px;background:#222;color:#fff;font-weight:700;white-space:nowrap;box-shadow:0 3px 12px #0005}
+.chip.yellow{background:#ffd400;color:#111}
+.bottom{position:absolute;left:12px;right:12px;bottom:12px;z-index:900}
+.card{background:#191919f2;border-radius:18px;padding:13px;box-shadow:0 5px 25px #0008}
+.routeTop{display:flex;align-items:center;gap:8px}
+.badge{padding:6px 9px;border-radius:9px;background:#ffd400;color:#111;font-size:11px;font-weight:900}
+.badge.green{background:#35d07f}.badge.red{background:#ff5757;color:#fff}
+.routeMain{font-size:20px;font-weight:900;margin-top:8px}
+.routeSub{color:#bbb;font-size:13px;margin-top:3px}
+.navBtn{width:100%;border:0;border-radius:12px;padding:13px;margin-top:10px;background:#ffd400;color:#111;font-weight:900;font-size:16px}
+.navBtn.stop{background:#ff5757;color:#fff}
+#navCard{position:absolute;left:12px;right:12px;top:78px;z-index:850;background:#151515f2;border-radius:17px;padding:12px 15px;display:none;box-shadow:0 5px 22px #0008}
+.turn{display:flex;align-items:center;gap:11px;font-weight:900;font-size:20px}
+.turnIcon{font-size:28px}
+.turnDist{color:#ffd400;font-size:15px;font-weight:900;margin-top:2px}
+.turnStreet{color:#ccc;font-size:13px;margin-top:2px}
+#gpsDot{position:absolute;right:15px;bottom:180px;z-index:800;border:0;border-radius:50%;width:50px;height:50px;background:#fff;color:#111;font-size:22px;box-shadow:0 4px 18px #0007}
+#mode{position:absolute;left:12px;top:136px;z-index:800;background:#191919eF;color:#fff;border-radius:12px;padding:7px 10px;font-size:11px;font-weight:800}
+#loading{display:none;position:absolute;inset:0;background:#0005;z-index:2000;align-items:center;justify-content:center}
+#loading div{background:#191919;padding:15px 18px;border-radius:13px;font-weight:800}
+.poiRow{display:flex;gap:7px;margin-top:8px}
+.poiRow button{flex:1;border:0;border-radius:10px;padding:9px;background:#2a2a2a;color:#fff;font-weight:700}
+.small{font-size:12px;color:#aaa;margin-top:6px;line-height:1.4}
+@media(max-width:430px){.bottom{bottom:8px}.routeMain{font-size:18px}#navCard{top:72px}.chips{margin-top:6px}}
+
+.batcave{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;width:min(88vw,390px);background:linear-gradient(145deg,#090b10,#171a22);border:1px solid #444;border-radius:22px;box-shadow:0 20px 70px #000d;color:#fff;padding:14px;display:none;text-align:center}
+.batcave.show{display:block;animation:batIn .25s ease-out}
+.batcave img{width:100%;height:220px;object-fit:cover;border-radius:15px;display:block;background:#050505}
+.batcave h2{margin:12px 0 4px;font-size:24px}.batcave p{margin:0 0 12px;color:#bbb}.batcave .batclose{border:0;border-radius:12px;padding:11px 18px;background:#fff;color:#111;font-weight:700}
+@keyframes batIn{from{opacity:0;transform:translate(-50%,-48%) scale(.94)}to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+</style>
+</head>
+<body>
+<div id="app">
+<div id="map"></div>
+
+<div class="top">
+  <div class="search">
+    <span class="icon">🔎</span>
+    <input id="dest" autocomplete="off" placeholder="Kamo želiš?">
+    <button id="clear" onclick="clearDestination()">×</button>
+  </div>
+  <div id="results"></div>
+  <div class="chips">
+    <button class="chip yellow" onclick="useGPS()">📍 Moja lokacija</button>
+    <button class="chip" onclick="findPOI('fuel')">⛽ Benzinske</button>
+    <button class="chip" onclick="findPOI('parking')">🅿️ Parking</button>
+    <button class="chip" onclick="findPOI('restaurant')">🍔 Hrana</button>
+  </div>
+</div>
+
+<div id="mode">🚕 TAXI MODE · Zagreb</div>
+
+<div id="navCard">
+  <div class="turn"><span class="turnIcon" id="turnIcon">⬆️</span><span id="turnText">Nastavi ravno</span></div>
+  <div class="turnDist" id="turnDist">—</div>
+  <div class="turnStreet" id="turnStreet"></div>
+</div>
+
+<button id="gpsDot" onclick="useGPS()">📍</button>
+
+<div class="bottom">
+  <div class="card" id="routeCard">
+    <div class="routeTop"><span class="badge">🚕 TAXI</span><span class="badge green" id="routeTime">Spremno</span></div>
+    <div class="routeMain" id="routeTitle">Odaberi odredište</div>
+    <div class="routeSub" id="routeSub">Lokacija se automatski prati. Odaberi adresu iz prijedloga.</div>
+    <div class="poiRow">
+      <button onclick="toggleTaxiLayer()">🟡 Taxi pravila</button>
+      <button onclick="startNavigation()">▶️ Navigacija</button>
+    </div>
+    <button class="navBtn stop" id="stopBtn" onclick="stopNavigation()" style="display:none">⏹ Zaustavi navigaciju</button>
+  </div>
+</div>
+
+<div id="loading"><div id="loadingText">Učitavam…</div></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<div id="batcave" class="batcave" role="dialog" aria-modal="true">
+  <img src="https://upload.wikimedia.org/wikipedia/en/1/17/Batman-BenAffleck.jpg" alt="Batman">
+  <h2>🦇 Ruta do Batcave-a</h2>
+  <p>Odredište prepoznato. Batman te čeka.</p>
+  <button class="batclose" onclick="closeBatcave()">Kreni prema Batcave-u</button>
+</div>
+<script>
+const map=L.map('map',{zoomControl:true}).setView([45.815,15.982],13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+ maxZoom:19,attribution:'© OpenStreetMap contributors'
+}).addTo(map);
+
+let userPos=null,userMarker=null,accuracy=null,destMarker=null,routeLine=null,watchId=null;
+let selected=null,currentSteps=[],stepIndex=0,navigation=false,lastReroute=0,searchTimer=null,controller=null,poiLayer=null,taxiLayer=null;
+let taxiLayerOn=false;
+
+const taxiCorridors=[
+ {name:'Avenija Dubrava',ok:true,pts:[[45.8278,15.997],[45.8283,16.012],[45.8288,16.030],[45.8295,16.050],[45.8300,16.072]]},
+ {name:'Maksimirska cesta',ok:true,pts:[[45.8205,15.969],[45.8215,15.986],[45.8230,16.003],[45.8245,16.020],[45.8260,16.035]]},
+ {name:'Avenija Većeslava Holjevca',ok:true,pts:[[45.792,15.965],[45.784,15.966],[45.774,15.969],[45.760,15.972],[45.747,15.976]]},
+ {name:'Savska tramvajski koridor',ok:false,pts:[[45.812,15.965],[45.805,15.966],[45.797,15.967],[45.788,15.968],[45.778,15.969]]}
+];
+
+function setLoading(on,text='Učitavam…'){document.getElementById('loading').style.display=on?'flex':'none';document.getElementById('loadingText').textContent=text}
+function showResults(){document.getElementById('results').style.display='block'}
+function hideResults(){document.getElementById('results').style.display='none';document.getElementById('results').innerHTML=''}
+
+document.getElementById('dest').addEventListener('input',()=>{
+ clearTimeout(searchTimer);
+ const q=document.getElementById('dest').value.trim();
+ if(q.length<3){hideResults();return}
+ searchTimer=setTimeout(()=>autocomplete(q),350);
+});
+
+async function autocomplete(q){
+ if(controller)controller.abort();
+ controller=new AbortController();
+ const signal=controller.signal;
+ showResults();
+ document.getElementById('results').innerHTML='<div class="result"><span>Tražim adrese u Zagrebu…</span></div>';
+
+ // Svaki izvor ima vlastiti fallback. Ako jedan servis ne radi iz preglednika,
+ // aplikacija ga preskače i automatski pokušava sljedeći.
+ const attempts=[
+  async()=>searchOfficialZagrebAddresses(q,signal),
+  async()=>searchZagrebGeocoder(q,signal),
+  async()=>searchNominatim(q,signal)
+ ];
+
+ for(const attempt of attempts){
+  try{
+   const results=await attempt();
+   const cleaned=cleanSearchResults(results,q);
+   if(cleaned.length){
+    renderAddressResults(cleaned,q);
+    return;
+   }
+  }catch(e){
+   if(e?.name==='AbortError') return;
+   // Nastavi na sljedeći izvor.
+  }
+ }
+
+ if(!signal.aborted){
+  document.getElementById('results').innerHTML='<div class="result"><b>Nema rezultata</b><span>Probaj npr. Kapucinska 12, Ilica 100 ili Nemetinska 25.</span></div>';
+ }
+}
+
+async function searchNominatim(q,signal){
+ const query=q.toLowerCase().includes('zagreb')?q:q+', Zagreb, Hrvatska';
+ const url='https://nominatim.openstreetmap.org/search?format=jsonv2&limit=12&countrycodes=hr&addressdetails=1&dedupe=0&q='+encodeURIComponent(query);
+ const r=await fetch(url,{headers:{'Accept-Language':'hr'},signal});
+ if(!r.ok)throw Error('Nominatim HTTP '+r.status);
+ const data=await r.json();
+ return data.map(x=>({
+  lat:+x.lat,
+  lon:+x.lon,
+  name:cleanNominatimAddress(x),
+  sub:cleanNominatimSub(x),
+  source:'osm',
+  display_name:x.display_name||''
+ }));
+}
+
+function normalizeText(s){
+ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+}
+
+function cleanSearchResults(items,q){
+ const raw=cleanStreetQuery(q);
+ const hasNumber=/\b\d+[a-z]?\b/i.test(raw);
+ const blocked=['mjesni odbor','gradska cetvrt','gradska četvrt','policijska postaja','zupanija','županija'];
+ const seen=new Set();
+ const out=[];
+ for(const x of (items||[])){
+  if(!x || !Number.isFinite(+x.lat) || !Number.isFinite(+x.lon))continue;
+  const name=String(x.name||'').replace(/\s+/g,' ').trim();
+  const norm=normalizeText(name);
+  if(!name)continue;
+  if(blocked.some(w=>norm.includes(normalizeText(w))))continue;
+  // Kod pretrage ulice bez broja želimo kućne brojeve prije raznih objekata.
+  if(!hasNumber && x.source==='osm' && !/\d+[a-z]?\s*$/.test(name) && /\b(ulica|cesta|avenija|trg|put|odvojak|prilaz|ulice)\b/i.test(name)===false && !norm.includes(normalizeText(raw))){
+   continue;
+  }
+  const key=(name+'|'+(+x.lat).toFixed(6)+'|'+(+x.lon).toFixed(6)).toLowerCase();
+  if(seen.has(key))continue;
+  seen.add(key);
+  out.push({...x,name});
+ }
+ return out;
+}
+
+function cleanStreetQuery(q){
+ return q.replace(/,?\s*(zagreb|hrvatska)\s*$/i,'').trim();
+}
+
+function escapeSql(s){return s.replace(/'/g,"''");}
+
+function webMercatorToLatLon(x,y){
+ const lon=x/20037508.34*180;
+ let lat=y/20037508.34*180;
+ lat=180/Math.PI*(2*Math.atan(Math.exp(lat*Math.PI/180))-Math.PI/2);
+ return {lat,lon};
+}
+
+async function searchOfficialZagrebAddresses(q,signal){
+ const raw=cleanStreetQuery(q);
+ if(raw.length<3)return [];
+ const m=raw.match(/^(.*?)[\s,]+(\d+[A-Za-z]?)$/);
+ const street=(m?m[1]:raw).trim();
+ const number=m?m[2].toUpperCase():'';
+ if(street.length<2)return [];
+
+ // Službeni GIS sloj Grada Zagreba sadrži ULICA + KUCNI_BROJ + koordinate.
+ const whereParts=[`UPPER(ULICA) LIKE UPPER('%${escapeSql(street)}%')`];
+ if(number)whereParts.push(`UPPER(KUCNI_BROJ) = UPPER('${escapeSql(number)}')`);
+ const params=new URLSearchParams({
+  where:whereParts.join(' AND '),
+  outFields:'KUCNI_BROJ,ULICA,NASELJE',
+  returnGeometry:'true',
+  geometryType:'esriGeometryPoint',
+  spatialRel:'esriSpatialRelIntersects',
+  orderByFields:'ULICA,KUCNI_BROJ',
+  resultRecordCount:'100',
+  f:'json'
+ });
+ const url='https://gis.zagreb.hr/server/rest/services/solari2024/MapServer/4/query?'+params.toString();
+ const r=await fetch(url,{signal});
+ if(!r.ok)throw Error('Zagreb GIS HTTP '+r.status);
+ const j=await r.json();
+ if(!j.features)return [];
+ return j.features.map(f=>{
+  const a=f.attributes||{}, g=f.geometry||{};
+  const p=webMercatorToLatLon(+g.x,+g.y);
+  const streetName=(a.ULICA||'').trim();
+  const house=(a.KUCNI_BROJ||'').trim();
+  return {
+   lat:p.lat,lon:p.lon,
+   name:(streetName+' '+house).trim(),
+   sub:(a.NASELJE||'Zagreb').trim()||'Zagreb',
+   source:'zagreb-kbr'
+  };
+ });
+}
+
+async function searchZagrebGeocoder(q,signal){
+ const params=new URLSearchParams({
+  SingleLine:cleanStreetQuery(q)+', Zagreb',
+  outFields:'*',
+  maxLocations:'10',
+  f:'json'
+ });
+ const url='https://gis.zagreb.hr/server/rest/services/Zagreb_211011_RPJ_V03/GeocodeServer/findAddressCandidates?'+params.toString();
+ const r=await fetch(url,{signal});
+ if(!r.ok)throw Error('Zagreb geocoder HTTP '+r.status);
+ const j=await r.json();
+ if(!j.candidates)return [];
+ return j.candidates.filter(c=>(c.score||0)>=60).map(c=>({
+  lat:+c.location.y,lon:+c.location.x,name:cleanGeocoderName(c.address),sub:'Zagreb',source:'zagreb-geocoder'
+ }));
+}
+
+function cleanGeocoderName(s){
+ let v=String(s||'').replace(/,?\s*(Grad Zagreb|Zagreb|Hrvatska).*$/i,'').trim();
+ return v||'Zagreb';
+}
+
+function cleanNominatimAddress(x){
+ const a=x.address||{};
+ const street=a.road||a.pedestrian||a.street||a.cycleway||'';
+ const house=a.house_number||'';
+ // Za adresni rezultat uvijek preferiramo ULICA + KUĆNI BROJ.
+ if(street && house)return (street+' '+house).trim();
+ if(street)return street.trim();
+ return String(x.name||x.display_name||'').split(',')[0].trim();
+}
+
+function cleanNominatimSub(x){
+ const a=x.address||{};
+ return [a.suburb||a.neighbourhood||a.city_district||a.city||'Zagreb'].filter(Boolean).join(', ');
+}
+
+function renderAddressResults(items,q=''){
+ const box=document.getElementById('results');box.innerHTML='';
+ const queryNumber=(cleanStreetQuery(q).match(/\b(\d+[A-Za-z]?)\s*$/)||[])[1]||'';
+ const sorted=[...items].sort((a,b)=>{
+  const an=(a.name||'').match(/(\d+[A-Za-z]*)\s*$/), bn=(b.name||'').match(/(\d+[A-Za-z]*)\s*$/);
+  if(queryNumber){
+   const ae=an && an[1].toUpperCase()===queryNumber.toUpperCase(), be=bn && bn[1].toUpperCase()===queryNumber.toUpperCase();
+   if(ae!==be)return ae?-1:1;
+  }
+  if(an&&bn){ const ai=parseInt(an[1],10), bi=parseInt(bn[1],10); if(ai!==bi)return ai-bi; return an[1].localeCompare(bn[1],'hr'); }
+  if(an&&!bn)return -1;
+  if(!an&&bn)return 1;
+  return (a.name||'').localeCompare(b.name||'','hr');
+ });
+ const shown=sorted.slice(0,15);
+ shown.forEach(x=>{
+  const el=document.createElement('div');el.className='result';
+  el.innerHTML='<b>'+esc(x.name)+'</b><span>'+esc(x.sub||'Zagreb')+'</span>';
+  el.onclick=()=>chooseDestination(x);box.appendChild(el);
+ });
+ if(!shown.length)box.innerHTML='<div class="result"><b>Nema rezultata</b><span>Probaj naziv ulice ili kućni broj.</span></div>';
+}
+
+function isBatcaveAddress(x){
+ const v=normalizeText((x?.name||'')+' '+(x?.display_name||''));
+ return /\bnemetinska\s*25\b/.test(v) || (v.includes('nemetinska') && /\b25\b/.test(v));
+}
+function showBatcave(){document.getElementById('batcave').classList.add('show')}
+function closeBatcave(){document.getElementById('batcave').classList.remove('show')}
+
+function chooseDestination(x){
+ selected={lat:+x.lat,lon:+x.lon,name:x.name||'Odredište',display_name:x.display_name||x.name||'Odredište'};
+ if(isBatcaveAddress(x))showBatcave();
+ document.getElementById('dest').value=selected.name;
+ hideResults();
+ if(destMarker)map.removeLayer(destMarker);
+ destMarker=L.marker([selected.lat,selected.lon]).addTo(map);
+ if(userPos)calculateRoute();
+ else {map.setView([selected.lat,selected.lon],15);document.getElementById('routeTitle').textContent=selected.name;}
+}
+
+function useGPS(){
+ if(!navigator.geolocation){alert('GPS nije dostupan.');return}
+ if(watchId!==null)return;
+ watchId=navigator.geolocation.watchPosition(onGPS,onGPSError,{enableHighAccuracy:true,maximumAge:2000,timeout:15000});
+}
+
+function onGPS(p){
+ userPos=[p.coords.latitude,p.coords.longitude];
+ const acc=p.coords.accuracy||30;
+ if(userMarker)map.removeLayer(userMarker);
+ userMarker=L.circleMarker(userPos,{radius:8,weight:3}).addTo(map).bindTooltip('Tvoja lokacija');
+ if(accuracy)map.removeLayer(accuracy);
+ accuracy=L.circle(userPos,{radius:acc,weight:1,opacity:.3}).addTo(map);
+ if(!window.initialCentered){map.setView(userPos,16);window.initialCentered=true}
+ if(selected && !window.routeStarted)calculateRoute();
+ if(navigation)updateNavigation();
+}
+function onGPSError(e){document.getElementById('routeSub').textContent='GPS: '+e.message}
+
+async function calculateRoute(){
+ if(!userPos||!selected)return;
+ setLoading(true,'Računam najbolju taxi rutu…');
+ try{
+  const u='https://router.project-osrm.org/route/v1/driving/'+userPos[1]+','+userPos[0]+';'+selected.lon+','+selected.lat+'?overview=full&geometries=geojson&steps=true&alternatives=true';
+  const r=await fetch(u);const j=await r.json();
+  if(j.code!=='Ok')throw Error('Ruta nije pronađena');
+  const candidates=j.routes.map(rt=>{
+    const score=taxiScore(rt.geometry.coordinates);
+    return {rt,score};
+  }).sort((a,b)=>a.score-b.score);
+  const best=candidates[0].rt;
+  if(routeLine)map.removeLayer(routeLine);
+  routeLine=L.geoJSON(best.geometry,{style:{weight:8,opacity:.9}}).addTo(map);
+  currentSteps=(best.legs?.[0]?.steps||[]).filter(s=>s.maneuver);
+  stepIndex=0;
+  const km=(best.distance/1000).toFixed(1),min=Math.round(best.duration/60);
+  document.getElementById('routeTime').textContent=min+' min · '+km+' km';
+  document.getElementById('routeTitle').textContent='Taxi ruta spremna';
+  document.getElementById('routeSub').textContent='🟢 Legalnost: prema eksperimentalnoj bazi taxi-koridora';
+  document.getElementById('stopBtn').style.display='none';
+  map.fitBounds(routeLine.getBounds(),{padding:[40,180]});
+  updateTurn();
+ }catch(e){document.getElementById('routeSub').textContent='Greška: '+e.message}
+ finally{setLoading(false)}
+}
+
+function taxiScore(coords){
+ let score=0;
+ for(let i=0;i<coords.length;i+=Math.max(1,Math.floor(coords.length/80))){
+  const p=[coords[i][1],coords[i][0]];
+  for(const c of taxiCorridors)for(const q of c.pts){
+   const d=dist(p,q);
+   if(d<90)score+=c.ok?-0.8:8;
+  }
+ }
+ return score;
+}
+
+function startNavigation(){
+ if(!selected){document.getElementById('routeTitle').textContent='Prvo odaberi odredište';return}
+ if(!routeLine){calculateRoute().then(()=>startNavigation());return}
+ navigation=true;window.routeStarted=true;
+ document.getElementById('navCard').style.display='block';
+ document.getElementById('stopBtn').style.display='block';
+ map.setView(userPos,17);
+ speakCurrentTurn();
+}
+function stopNavigation(){
+ navigation=false;window.routeStarted=false;
+ document.getElementById('navCard').style.display='none';
+ document.getElementById('stopBtn').style.display='none';
+ if(window.speechSynthesis)speechSynthesis.cancel();
+}
+function updateTurn(){
+ if(!currentSteps.length)return;
+ if(stepIndex>=currentSteps.length){
+  document.getElementById('turnIcon').textContent='🏁';
+  document.getElementById('turnText').textContent='Stigli ste na odredište';
+  document.getElementById('turnDist').textContent='';
+  document.getElementById('turnStreet').textContent='';
+  return;
+ }
+ const s=currentSteps[stepIndex],m=s.maneuver||{},mod=m.modifier||'straight',type=m.type||'continue';
+ let icon='⬆️',text='Nastavi ravno';
+ if(type==='turn'){if(mod.includes('left')){icon='↰';text='Skreni lijevo'}else if(mod.includes('right')){icon='↱';text='Skreni desno'}}
+ else if(type==='roundabout'||type==='rotary'){icon='🔄';text='Kružni tok'}
+ else if(type==='merge'){icon='↗️';text='Uključi se'}
+ else if(type==='fork'){icon=mod.includes('left')?'↰':'↱';text='Drži se '+(mod.includes('left')?'lijevo':'desno')}
+ document.getElementById('turnIcon').textContent=icon;
+ document.getElementById('turnText').textContent=text;
+ document.getElementById('turnDist').textContent=formatDist(s.distance||0);
+ document.getElementById('turnStreet').textContent=s.name?'na '+s.name:'';
+}
+function updateNavigation(){
+ if(!navigation||!userPos||!currentSteps.length)return;
+ let best=stepIndex,bestD=Infinity;
+ for(let i=stepIndex;i<Math.min(currentSteps.length,stepIndex+4);i++){
+  const loc=currentSteps[i].maneuver?.location;if(!loc)continue;
+  const d=dist(userPos,[loc[1],loc[0]]);if(d<bestD){bestD=d;best=i}
+ }
+ if(bestD<35 && best>stepIndex){stepIndex=best;updateTurn();speakCurrentTurn()}
+ if(bestD>250 && Date.now()-lastReroute>12000 && selected){lastReroute=Date.now();calculateRoute()}
+ map.setView(userPos,17,{animate:true,duration:.25});
+ // dynamic remaining distance to current maneuver
+ if(stepIndex<currentSteps.length){
+  const loc=currentSteps[stepIndex].maneuver?.location;
+  if(loc)document.getElementById('turnDist').textContent=formatDist(dist(userPos,[loc[1],loc[0]]));
+ }
+}
+function speakCurrentTurn(){
+ if(!navigation||!window.speechSynthesis||stepIndex>=currentSteps.length)return;
+ const s=currentSteps[stepIndex],m=s.maneuver||{},mod=m.modifier||'straight',d=Math.round(dist(userPos,[m.location[1],m.location[0]]));
+ let text='Nastavi ravno';
+ if(m.type==='turn')text=mod.includes('left')?'Skreni lijevo':mod.includes('right')?'Skreni desno':'Nastavi';
+ else if(m.type==='roundabout'||m.type==='rotary')text='Na kružnom toku';
+ if(s.name)text+=' na '+s.name;
+ text+=' za '+(d>=1000?(d/1000).toFixed(1)+' kilometar':d+' metara');
+ speechSynthesis.cancel();
+ const u=new SpeechSynthesisUtterance(text);u.lang='hr-HR';u.rate=.95;speechSynthesis.speak(u);
+}
+function formatDist(m){return m>=1000?(m/1000).toFixed(1)+' km':Math.round(m)+' m'}
+
+async function findPOI(type){
+ if(!userPos){useGPS();document.getElementById('routeSub').textContent='Pričekaj GPS pa ponovi.';return}
+ const tags={fuel:'amenity=fuel',parking:'amenity=parking',restaurant:'amenity=restaurant'}[type];
+ setLoading(true,'Tražim u blizini…');
+ try{
+  const q='[out:json];node['+tags+'](around:3000,'+userPos[0]+','+userPos[1]+');out;';
+  const r=await fetch('https://overpass-api.de/api/interpreter?data='+encodeURIComponent(q));
+  const j=await r.json();
+  if(poiLayer)map.removeLayer(poiLayer);poiLayer=L.layerGroup();
+  j.elements.slice(0,30).forEach(x=>{
+    if(!x.lat||!x.lon)return;
+    const name=x.tags?.name||({'fuel':'Benzinska','parking':'Parking','restaurant':'Restoran'}[type]);
+    L.marker([x.lat,x.lon]).bindPopup('📍 '+esc(name)).addTo(poiLayer);
+  });
+  poiLayer.addTo(map);map.setView(userPos,14);
+ }catch(e){document.getElementById('routeSub').textContent='POI pretraga nije dostupna.'}
+ finally{setLoading(false)}
+}
+function toggleTaxiLayer(){
+ taxiLayerOn=!taxiLayerOn;
+ if(taxiLayer)map.removeLayer(taxiLayer);
+ if(!taxiLayerOn)return;
+ taxiLayer=L.layerGroup();
+ taxiCorridors.forEach(c=>L.polyline(c.pts,{weight:5,opacity:.75,dashArray:c.ok?'':'8 8'}).bindTooltip((c.ok?'🚕 ':'🚫 ')+c.name).addTo(taxiLayer));
+ taxiLayer.addTo(map);
+}
+function clearDestination(){
+ selected=null;window.routeStarted=false;stopNavigation();
+ document.getElementById('dest').value='';hideResults();
+ if(destMarker){map.removeLayer(destMarker);destMarker=null}
+ if(routeLine){map.removeLayer(routeLine);routeLine=null}
+ document.getElementById('routeTime').textContent='Spremno';
+ document.getElementById('routeTitle').textContent='Odaberi odredište';
+ document.getElementById('routeSub').textContent='Lokacija se automatski prati.';
+}
+function dist(a,b){const R=6371000,la=a[0]*Math.PI/180,lb=b[0]*Math.PI/180,dp=(b[0]-a[0])*Math.PI/180,dl=(b[1]-a[1])*Math.PI/180;const x=Math.sin(dp/2)**2+Math.cos(la)*Math.cos(lb)*Math.sin(dl/2)**2;return 2*R*Math.asin(Math.sqrt(x))}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+
+
+document.getElementById('batcave').addEventListener('click',e=>{if(e.target.id==='batcave')closeBatcave()});
+map.on('click',hideResults);
+window.addEventListener('load',()=>setTimeout(useGPS,500));
+</script>
+</body>
+</html>
