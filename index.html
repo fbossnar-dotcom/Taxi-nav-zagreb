@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="hr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Taxi Nav Zagreb</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#111;color:#fff}
+#map{position:fixed;inset:0}.panel{position:fixed;z-index:10;left:10px;right:10px;top:10px;background:#171717f2;border-radius:18px;padding:13px;box-shadow:0 8px 30px #0008}
+.title{font-size:19px;font-weight:900}.sub{font-size:11px;color:#aaa;margin:3px 0 10px}.row{display:flex;gap:7px}
+input{width:100%;border:0;border-radius:12px;padding:13px;font-size:15px;background:#fff;color:#111}
+button{border:0;border-radius:12px;padding:12px 13px;font-weight:900;background:#f4c400;color:#111;white-space:nowrap}.dark{background:#333;color:#fff}
+#suggestions{display:none;background:#242424;border-radius:12px;margin-top:7px;overflow:hidden}
+.sug{padding:11px;border-bottom:1px solid #3a3a3a;font-size:13px}.sug:last-child{border:0}.sug:active{background:#444}
+.status{font-size:12px;color:#ccc;margin-top:8px;min-height:18px}.result{display:none;background:#242424;border-radius:12px;margin-top:8px;padding:10px}
+.result b{font-size:18px}.pill{display:inline-block;background:#3b3b3b;border-radius:99px;padding:4px 7px;margin:5px 4px 0 0;font-size:10px}
+.note{font-size:10px;color:#999;margin-top:5px}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+ <div class="title">🚕 TAXI NAV ZAGREB</div>
+ <div class="sub">Prototip taxi navigacije — verzija 0.2</div>
+ <div class="row"><input id="q" autocomplete="off" placeholder="Upiši ulicu, adresu ili mjesto"><button id="search">TRAŽI</button></div>
+ <div id="suggestions"></div>
+ <div class="row" style="margin-top:7px"><button class="dark" id="loc">📍 Moja lokacija</button><button id="route">🚕 RUTA</button></div>
+ <div class="status" id="status">Upiši odredište ili dopusti GPS.</div>
+ <div class="result" id="result"></div>
+ <div class="note">Žute/taxi trake u ovoj verziji su samo demonstracija — nisu još službena pravna baza.</div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map=L.map('map').setView([45.815,15.982],13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+let user=null,dest=null,routeLine=null,searchTimer=null;
+const taxi=L.layerGroup().addTo(map);
+[
+ [[45.8078,15.9702],[45.8107,15.9715]],
+ [[45.8122,15.9760],[45.8151,15.9784]]
+].forEach(x=>L.polyline(x,{color:'#ffd000',weight:7,opacity:.8}).addTo(taxi));
+
+const q=document.getElementById('q'), sug=document.getElementById('suggestions'), status=document.getElementById('status');
+
+function msg(x){status.textContent=x}
+function showSug(items){
+ sug.innerHTML='';
+ if(!items.length){sug.style.display='none';return}
+ items.slice(0,5).forEach(item=>{
+  const d=document.createElement('div');d.className='sug';d.textContent=item.display_name;
+  d.onclick=()=>selectDest(item);sug.appendChild(d);
+ });
+ sug.style.display='block';
+}
+function selectDest(item){
+ dest={lat:+item.lat,lon:+item.lon,name:item.display_name}; q.value=item.display_name;sug.style.display='none';
+ map.setView([dest.lat,dest.lon],16);
+ L.marker([dest.lat,dest.lon]).addTo(map).bindPopup('📍 Odredište').openPopup();
+ msg('Odredište odabrano. Pritisni RUTA.');
+}
+
+async function searchAddress(){
+ const text=q.value.trim(); if(text.length<3){msg('Upiši barem 3 znaka.');return}
+ msg('Tražim adresu…');
+ try{
+  // Photon je ovdje alternativni geocoder; radi bez API ključa.
+  const url='https://photon.komoot.io/api/?limit=6&lang=hr&q='+encodeURIComponent(text+', Zagreb, Hrvatska');
+  const r=await fetch(url,{headers:{'Accept':'application/json'}});
+  if(!r.ok) throw new Error('servis');
+  const data=await r.json();
+  const items=(data.features||[]).map(f=>{
+    const p=f.properties||{}, c=f.geometry.coordinates;
+    return {lat:c[1],lon:c[0],display_name:[p.name,p.street,p.housenumber,p.city].filter(Boolean).join(', ')};
+  });
+  showSug(items);
+  msg(items.length?'Odaberi adresu s popisa.':'Adresa nije pronađena. Probaj npr. Ilica 10 ili Maksimirska 50.');
+ }catch(e){
+  // Ako preglednik blokira vanjski API iz lokalne datoteke, jasno objasni problem.
+  msg('Pretraga servisa nije dostupna iz ove lokalne datoteke. Probaj otvoriti prototip kroz web-hosting; karta i GPS i dalje rade.');
+ }
+}
+
+async function locate(){
+ if(!navigator.geolocation){msg('GPS nije podržan.');return}
+ msg('Tražim GPS…');
+ navigator.geolocation.getCurrentPosition(p=>{
+  const ll=[p.coords.latitude,p.coords.longitude];
+  if(user) user.setLatLng(ll); else user=L.marker(ll).addTo(map).bindPopup('🚕 Tvoja lokacija');
+  map.setView(ll,16);msg('GPS pronađen.');
+ },()=>msg('Dopusti pristup lokaciji u pregledniku.'),{enableHighAccuracy:true,timeout:12000});
+}
+
+async function makeRoute(){
+ if(!dest){msg('Prvo odaberi odredište.');return}
+ if(!user){await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(p=>{user=L.marker([p.coords.latitude,p.coords.longitude]).addTo(map);res()},rej,{enableHighAccuracy:true,timeout:12000}))}
+ const a=user.getLatLng();
+ msg('Računam rutu…');
+ try{
+  const u=`https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${dest.lon},${dest.lat}?overview=full&geometries=geojson`;
+  const r=await fetch(u);const d=await r.json();if(d.code!=='Ok')throw 0;
+  if(routeLine)map.removeLayer(routeLine);
+  routeLine=L.geoJSON(d.routes[0].geometry,{style:{color:'#f4c400',weight:6}}).addTo(map);
+  map.fitBounds(routeLine.getBounds(),{padding:[20,220]});
+  const min=Math.round(d.routes[0].duration/60),km=(d.routes[0].distance/1000).toFixed(1);
+  document.getElementById('result').style.display='block';
+  document.getElementById('result').innerHTML=`<b>${min} min</b> · ${km} km<br><span class="pill">🚕 TAXI MODE</span><span class="pill">🟡 taxi pravila: prototip</span>`;
+  msg('Ruta izračunata.');
+ }catch(e){msg('Ne mogu trenutno izračunati rutu. Provjeri internet vezu.')}
+}
+q.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{if(q.value.trim().length>=3)searchAddress()},500)});
+q.addEventListener('keydown',e=>{if(e.key==='Enter')searchAddress()});
+document.getElementById('search').onclick=searchAddress;
+document.getElementById('loc').onclick=locate;
+document.getElementById('route').onclick=makeRoute;
+</script>
+</body></html>
