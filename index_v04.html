@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Taxi Nav Zagreb v0.4</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#111;color:#fff}
+header{padding:14px 14px 10px;background:#171717;position:sticky;top:0;z-index:1000}
+h1{font-size:20px;margin:0 0 4px}
+.sub{font-size:12px;color:#aaa}
+.controls{padding:10px;background:#202020}
+input{width:100%;padding:13px;border:0;border-radius:10px;font-size:16px;margin-bottom:8px}
+button{border:0;border-radius:10px;padding:11px 13px;font-weight:700;margin:2px;cursor:pointer}
+.primary{background:#ffd400;color:#111}
+.secondary{background:#333;color:#fff}
+#map{height:55vh;min-height:390px}
+.panel{padding:12px;background:#181818}
+.status{background:#252525;border-radius:12px;padding:11px;margin-bottom:8px}
+.badge{display:inline-block;padding:5px 8px;border-radius:8px;background:#ffd400;color:#111;font-weight:800;font-size:11px;margin-right:5px}
+.badge.red{background:#ff5757;color:#fff}
+.badge.green{background:#37c978;color:#071}
+.small{font-size:12px;color:#bbb;line-height:1.45}
+.rule{padding:10px;border-top:1px solid #333}
+.rule b{display:block;margin-bottom:3px}
+.ok{color:#55e38b}.no{color:#ff6b6b}.warn{color:#ffd45a}
+#results{max-height:180px;overflow:auto;background:#151515;border-radius:10px}
+.result{padding:10px;border-bottom:1px solid #333;cursor:pointer}
+.result:last-child{border:0}
+</style>
+</head>
+<body>
+<header>
+  <h1>🚕 TAXI NAV ZAGREB</h1>
+  <div class="sub">v0.4 · taxi-pravila + ruta</div>
+</header>
+
+<div class="controls">
+  <input id="dest" placeholder="Upiši odredište u Zagrebu…">
+  <button class="primary" onclick="search()">🔎 TRAŽI</button>
+  <button class="secondary" onclick="gps()">📍 MOJA LOKACIJA</button>
+  <button class="secondary" onclick="clearAll()">✖ OČISTI</button>
+  <div id="results"></div>
+</div>
+
+<div id="map"></div>
+
+<div class="panel">
+  <div class="status" id="status">
+    <span class="badge">🚕 TAXI MODE</span>
+    <span class="badge">v0.4</span>
+    <div class="small" style="margin-top:8px">
+      Nova verzija ima bazu poznatih taxi-pravila. Pravila su informativna i ne zamjenjuju prometni znak na cesti.
+    </div>
+  </div>
+  <div id="routeInfo" class="status">Odredi polazište GPS-om ili odaberi odredište.</div>
+
+  <div class="status">
+    <b>🟡 TAXI KORIDORI — Zagreb</b>
+    <div class="rule"><b>Avenija Dubrava</b><span class="ok">Taxi: DA</span><div class="small">Žuta traka za javni prijevoz uključuje taxi.</div></div>
+    <div class="rule"><b>Maksimirska cesta</b><span class="ok">Taxi: DA</span><div class="small">PU zagrebačka navodi taxi među vozilima kojima je žuta traka namijenjena.</div></div>
+    <div class="rule"><b>Avenija Većeslava Holjevca</b><span class="ok">Taxi: DA*</span><div class="small">PU zagrebačka je 2025. navodi u nadzoru žute trake; provjera prometne signalizacije je obavezna.</div></div>
+    <div class="rule"><b>Savska cesta</b><span class="no">Taxi: NE u tramvajskom koridoru</span><div class="small">Grad Zagreb je 25. 6. 2026. objavio proširenje zabrane korištenja tramvajskog koridora za taksije.</div></div>
+    <div class="rule"><b>Ozaljska / ostale žute trake</b><span class="warn">Provjera segmenta</span><div class="small">Pravila mogu ovisiti o konkretnoj dionici i signalizaciji.</div></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map=L.map('map').setView([45.815,15.9819],12);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  maxZoom:19,attribution:'© OpenStreetMap contributors'
+}).addTo(map);
+
+let userMarker=null,destMarker=null,routeLine=null,accuracyCircle=null;
+let userPos=null;
+
+const rules={
+  "Avenija Dubrava":{taxi:true,note:"Taxi je naveden među vozilima javnog prijevoza kojima je žuta traka namijenjena."},
+  "Maksimirska cesta":{taxi:true,note:"Taxi je naveden među vozilima javnog prijevoza kojima je žuta traka namijenjena."},
+  "Avenija Većeslava Holjevca":{taxi:true,note:"PU Zagreb ju navodi u nadzoru žute trake; provjeriti signalizaciju na konkretnoj dionici."},
+  "Savska cesta":{taxi:false,note:"U tramvajskom koridoru taxi više nije dopušten prema objavi Grada Zagreba od 25.6.2026."}
+};
+
+async function search(){
+  const q=document.getElementById('dest').value.trim();
+  if(!q){alert('Upiši odredište.');return}
+  const query=q.toLowerCase().includes('zagreb')?q:q+', Zagreb, Hrvatska';
+  setStatus('Tražim adresu…');
+  try{
+    const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=hr&q='+encodeURIComponent(query),{headers:{'Accept-Language':'hr'}});
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    const box=document.getElementById('results');
+    box.innerHTML='';
+    if(!data.length){box.innerHTML='<div class="result">Nema rezultata. Probaj npr. "Trg bana Jelačića".</div>';return}
+    data.forEach(x=>{
+      const d=document.createElement('div');d.className='result';
+      d.innerHTML='<b>'+escapeHtml(x.display_name.split(',').slice(0,3).join(', '))+'</b><div class="small">'+escapeHtml(x.display_name)+'</div>';
+      d.onclick=()=>chooseDest(x);
+      box.appendChild(d);
+    });
+  }catch(e){setStatus('Greška pri pretrazi: '+e.message)}
+}
+
+function chooseDest(x){
+  const lat=+x.lat,lon=+x.lon;
+  if(destMarker)map.removeLayer(destMarker);
+  destMarker=L.marker([lat,lon]).addTo(map).bindPopup('📍 '+escapeHtml(x.display_name)).openPopup();
+  document.getElementById('results').innerHTML='';
+  map.setView([lat,lon],15);
+  if(userPos)route(userPos,[lat,lon]); else setStatus('Odredište je odabrano. Sada pritisni 📍 MOJA LOKACIJA.');
+}
+
+function gps(){
+  if(!navigator.geolocation){alert('Ovaj preglednik ne podržava GPS.');return}
+  setStatus('Dohvaćam GPS lokaciju…');
+  navigator.geolocation.getCurrentPosition(p=>{
+    userPos=[p.coords.latitude,p.coords.longitude];
+    if(userMarker)map.removeLayer(userMarker);
+    userMarker=L.marker(userPos).addTo(map).bindPopup('📍 Tvoja lokacija').openPopup();
+    if(accuracyCircle)map.removeLayer(accuracyCircle);
+    accuracyCircle=L.circle(userPos,{radius:p.coords.accuracy||30,weight:1}).addTo(map);
+    map.setView(userPos,15);
+    if(destMarker){
+      const ll=destMarker.getLatLng();
+      route(userPos,[ll.lat,ll.lng]);
+    }else setStatus('GPS je spreman. Odaberi odredište.');
+  },e=>setStatus('GPS greška: '+e.message),{enableHighAccuracy:true,timeout:10000,maximumAge:10000});
+}
+
+async function route(from,to){
+  setStatus('Računam rutu…');
+  try{
+    const url='https://router.project-osrm.org/route/v1/driving/'+from[1]+','+from[0]+';'+to[1]+','+to[0]+'?overview=full&geometries=geojson&steps=true';
+    const r=await fetch(url);
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const j=await r.json();
+    if(j.code!=='Ok'||!j.routes.length)throw new Error('Ruta nije pronađena');
+    const rt=j.routes[0];
+    if(routeLine)map.removeLayer(routeLine);
+    routeLine=L.geoJSON(rt.geometry,{style:{weight:7,opacity:.9}}).addTo(map);
+    map.fitBounds(routeLine.getBounds(),{padding:[25,25]});
+    const km=(rt.distance/1000).toFixed(1);
+    const min=Math.round(rt.duration/60);
+    document.getElementById('routeInfo').innerHTML=
+      '<span class="badge">🚕 TAXI MODE</span> <span class="badge">🗺️ '+min+' min · '+km+' km</span>'+
+      '<div class="small" style="margin-top:8px">Osnovnu rutu trenutno računa OSRM. Taxi-pravila se u v0.4 prikazuju kao zaseban sloj; još NE mijenjamo OSRM graf prema legalnosti žutih traka.</div>'+
+      '<div class="small warn" style="margin-top:6px">⚠️ Za stvarnu navigaciju uvijek vrijedi prometni znak i aktualna regulacija na cesti.</div>';
+    setStatus('Ruta izračunata.');
+  }catch(e){setStatus('Greška pri ruti: '+e.message)}
+}
+
+function clearAll(){
+  if(destMarker){map.removeLayer(destMarker);destMarker=null}
+  if(routeLine){map.removeLayer(routeLine);routeLine=null}
+  if(userMarker){map.removeLayer(userMarker);userMarker=null}
+  if(accuracyCircle){map.removeLayer(accuracyCircle);accuracyCircle=null}
+  userPos=null;
+  document.getElementById('dest').value='';
+  document.getElementById('results').innerHTML='';
+  document.getElementById('routeInfo').innerHTML='Odredi polazište GPS-om ili odaberi odredište.';
+  setStatus('Spremno.');
+}
+function setStatus(t){document.getElementById('status').querySelector('.small').textContent=t}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
+document.getElementById('dest').addEventListener('keydown',e=>{if(e.key==='Enter')search()});
+</script>
+</body>
+</html>
